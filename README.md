@@ -1,7 +1,7 @@
 # trie
 Auto-completion & Graph Visualization Tool
 
-[![License]](https://img.sheilds.io/badge/license-MIT-blue.svg)](https://https://github.com/Melkor-1/trie/edit/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://https://github.com/Melkor-1/trie/edit/main/LICENSE)
 
 trie is a program that combines auto-completion and trie-based graph visualization. It enables users to suggest auto-completions for a given prefix and generates a visual representation of the underlying trie structure.
 
