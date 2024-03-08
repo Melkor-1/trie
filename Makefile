@@ -1,11 +1,14 @@
-CFLAGS 	= -std=c17
+CC 		:= gcc-13
+
+CFLAGS 	:= -std=c99
 CFLAGS 	+= -no-pie
 CFLAGS	+= -ftrapv
 CFLAGS 	+= -Wall
 CFLAGS 	+= -Wextra
 CFLAGS 	+= -Warray-bounds
-CFLAGS 	+= -Wconversion
+# CFLAGS 	+= -Wconversion
 CFLAGS 	+= -Wmissing-braces
+CFLAGS  += -Wno-unused-function
 CFLAGS 	+= -Wno-parentheses
 CFLAGS 	+= -Wno-format-truncation
 CFLAGS	+= -Wno-type-limits

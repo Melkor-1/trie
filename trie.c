@@ -14,9 +14,13 @@
 
 #include <getopt.h>
 
-#define PROGRAM_NAME "auto-complete"
+#define IO_IMPLEMENTATION
+#define IO_STATIC
+#include "io.h"
+
+#define PROGRAM_NAME    "auto-complete"
 #define OUTPUT_DOT_FILE "graph.dot"
-#define AC_BUFFER_CAP 1024
+#define AC_BUFFER_CAP   1024 * 2
 
 struct flags {
     bool kflag;                 /* Keep the transient .DOT file. */
@@ -58,14 +62,22 @@ static void usage_err(const char *prog_name)
     exit(EXIT_FAILURE);
 }
 
-static void parse_options(const struct option *restrict long_options,
-    struct flags *restrict opt_ptr, int argc, char *const argv[],
-    const char **restrict prefix)
+static void parse_options(const struct option * long_options,
+                          struct flags *        opt_ptr, 
+                          int                   argc, 
+                          char **restrict       argv,
+                          const char **restrict prefix)
 {
-    int c;
+    int c = 0;
     int err_flag = 0;
 
-    while ((c = getopt_long(argc, argv, "shkc:p:", long_options, NULL)) != -1) {
+    while (true) {
+        c = getopt_long(argc, argv, "shkc:p:", long_options, NULL);
+        
+        if (c == -1) {
+            break;
+        }
+
         switch (c) {
             case 'k':
                 ++err_flag;
@@ -154,9 +166,9 @@ static void parse_options(const struct option *restrict long_options,
  */
 #define INVALID_OFFSET -1
 
-#define INITIAL_POOL_CAP 1024
+#define INITIAL_POOL_CAP 1024 * 2
 
-typedef struct Node {
+typedef struct {
     /* TODO: This still wastes a lot of memory. Something like Pythons's dict 
      * would be better. Explore the idea of using a dynamically growing 
      * hash-table for Node.children. 
@@ -172,27 +184,28 @@ typedef struct Node {
     bool terminal;
 } Node;
 
-static struct {
+struct Trie {
     Node *pool;
     int32_t count;
     int32_t capacity;
-} Trie;
+} Trie; 
 
 static bool init_pool(void)
 {
     Trie.pool = malloc(sizeof *Trie.pool * INITIAL_POOL_CAP);
 
-    if (!Trie.pool) {
+    if (Trie.pool == NULL) {
         perror("malloc()");
         return false;
     }
 
-    Trie.capacity = INITIAL_POOL_CAP;
-    return true;
+    return Trie.capacity = INITIAL_POOL_CAP;
 }
 
 static inline void free_pool(void)
 {
+    Trie.capacity = 0;
+    Trie.count = 0;
     free(Trie.pool);
 }
 
@@ -202,7 +215,7 @@ static int32_t alloc_node(void)
         const int32_t remaining = INT32_MAX - Trie.capacity;
 
         /* We can no longer add more nodes. Bail out. */
-        if (!remaining) {
+        if (remaining == 0) {
             /* Is this helpful? */
             fputs("Error: too many nodes. Consider recompiling the program"
                 "with a greater int width for more indexing range.\n", stderr);
@@ -212,7 +225,7 @@ static int32_t alloc_node(void)
         Trie.capacity += remaining < INITIAL_POOL_CAP ? remaining : INITIAL_POOL_CAP;
         void *const tmp = realloc(Trie.pool, sizeof *Trie.pool * (size_t) Trie.capacity);
 
-        if (!tmp) {
+        if (tmp == NULL) {
             perror("realloc()");
             return INVALID_OFFSET;
         }
@@ -220,97 +233,32 @@ static int32_t alloc_node(void)
         Trie.pool = tmp;
     }
 
-    Node *const new = &Trie.pool[Trie.count];
+    Node *const tmp = &Trie.pool[Trie.count];
 
-    memset(new->children, INVALID_OFFSET, sizeof new->children);
+    memset(tmp->children, INVALID_OFFSET, sizeof tmp->children);
     Trie.pool[Trie.count].terminal = false;
     return Trie.count++;
 }
 
 static bool insert_text(int32_t root_idx, const char *text)
 {
-    while (*text) {
+    while (*text != '\0') {
         const int32_t idx = *text - ASCII_OFFSET;
 
         if (Trie.pool[root_idx].children[idx] == INVALID_OFFSET) {
-            const int32_t new = alloc_node();
+            const int32_t tmp = alloc_node();
 
-            if (new == INVALID_OFFSET) {
+            if (tmp == INVALID_OFFSET) {
                 return false;
             }
 
-            Trie.pool[root_idx].children[idx] = new;
+            Trie.pool[root_idx].children[idx] = tmp;
         }
         root_idx = Trie.pool[root_idx].children[idx];
         ++text;
     }
 
     return Trie.pool[root_idx].terminal = true;
-}
-
-static char *read_file(FILE *fp)
-{
-    static const size_t page_size = 4096;
-    char *content = NULL;
-    size_t len = 0;
-
-    for (size_t rcount = 1; rcount; len += rcount) {
-        void *const tmp = realloc(content, len + page_size);
-
-        if (!tmp) {
-            free(content);
-            content = NULL;
-/* ENOMEM is not a C standard error code, yet quite common. */
-#ifdef ENOMEM
-            errno = ENOMEM;
-#endif
-            return NULL;
-        }
-        content = tmp;
-        rcount = fread(content + len, 1, page_size - 1, fp);
-
-        if (ferror(fp)) {
-            free(content);
-            content = NULL;
-#ifdef ENOMEM
-            errno = ENOMEM;
-#endif
-            return NULL;
-        }
-    }
-    content[len] = '\0';
-    return content;
-}
-
-static size_t split_lines(char *restrict s, char ***restrict lines)
-{
-    const size_t chunk_size = 1024;
-    size_t capacity = 0;
-    size_t line_count = 0;
-
-    while (s && *s) {
-        if (line_count >= capacity) {
-            char **const new = realloc(*lines,
-                sizeof **lines * (capacity += chunk_size));
-
-            if (!new) {
-                free(*lines);
-                *lines = NULL;
-#ifdef ENOMEM
-                errno = ENOMEM;
-#endif
-                return 0;
-            }
-            *lines = new;
-        }
-        (*lines)[line_count++] = s;
-        s = strchr(s, '\n');
-
-        if (s) {
-            *s++ = '\0';
-        }
-    }
-    return line_count;
 }
 
 static char ac_buffer[AC_BUFFER_CAP];
@@ -333,7 +281,7 @@ static void ac_buffer_pop(void)
 
 static int32_t find_prefix(int32_t root_idx, const char *prefix)
 {
-    while (*prefix) {
+    while (*prefix != '\0') {
         const int32_t child_idx = *prefix - ASCII_OFFSET;
 
         if (Trie.pool[root_idx].children[child_idx] == INVALID_OFFSET) {
@@ -434,9 +382,9 @@ static bool generate_graph(void)
 
 static bool generate_dot(int32_t root_idx, const char *prefix)
 {
-    FILE *const sink = fopen("graph.dot", "w");
+    FILE *const sink = fopen(OUTPUT_DOT_FILE, "w");
 
-    if (!sink) {
+    if (sink == NULL) {
         perror("fopen()");
         return false;
     }
@@ -447,13 +395,13 @@ static bool generate_dot(int32_t root_idx, const char *prefix)
 
     root_idx == 0 ? dump_dot_whole(sink) : dump_dot_prefix(sink, root_idx);
     fprintf(sink, "}\n");
-    fclose(sink);
-    return true;
+    return !fclose(sink);
 }
 
-static bool process_args(int32_t root_idx,
-    const struct flags *restrict options, const char *restrict prefix,
-    const char *restrict out_file)
+static bool process_args(int32_t                root_idx,
+                         const struct flags *   options, 
+                         const char *restrict   prefix,
+                         const char *restrict   out_file)
 {
     bool rv = true;
 
@@ -484,8 +432,6 @@ static bool process_args(int32_t root_idx,
             root_idx = subtree_idx;
         }
 
-        /* At this point, we can free the file, lines and Trie.pool, but we'd have
-         * to change the structure of the code. */
         if (!generate_dot(root_idx, prefix)
             || !generate_graph()) {
             rv = !rv;
@@ -530,7 +476,7 @@ int main(int argc, char *argv[])
     if (options.sflag || options.cflag) {
         if ((optind + 1) == argc) {
             in_file = fopen(argv[optind], "r");
-            if (!in_file) {
+            if (in_file == NULL) {
                 perror(argv[optind]);
                 return EXIT_FAILURE;
             }
@@ -543,11 +489,12 @@ int main(int argc, char *argv[])
         usage_err(PROGRAM_NAME);
     }
 
-    char *const content = read_file(in_file);
-    char **lines = NULL;
-    const size_t num_lines = split_lines(content, &lines);
+    size_t nbytes = 0;
+    char *const content = io_read_file(in_file, &nbytes);
+    size_t nlines = 0;
+    char **lines = io_split_lines(content, &nlines);
 
-    if (!lines) {
+    if (lines == NULL) {
         free(content);
         perror("fread()");
         return EXIT_FAILURE;
@@ -558,7 +505,7 @@ int main(int argc, char *argv[])
 
     if (!init_pool()
         || (root_idx = alloc_node()) == INVALID_OFFSET
-        || !populate_trie(root_idx, lines, num_lines)) {
+        || !populate_trie(root_idx, lines, nlines)) {
         rv = !rv;
         goto cleanup;
 
@@ -571,21 +518,22 @@ int main(int argc, char *argv[])
         debug_printf("Total lines read: %zu.\n" "Total nodes allocated: %"
                     PRId32 ".\n" "Total nodes used: %" PRId32 ".\n"
                     "Total memory allocated: %s.\n" "Total memory used: %s.\n",
-                    num_lines, 
+                    nlines, 
                     Trie.capacity, 
                     Trie.count, 
                     total, 
                     used); 
-        free(total);
-        free(used);
+        /* free(total); */
+        /* free(used); */
     );
     
     rv = process_args(root_idx, &options, search_prefix, OUTPUT_DOT_FILE);
 
   cleanup:
-    free_pool();                /* NO-OP if init_pool() returns false. */
-    free(content);
-    free(lines);
+    /* We're exiting. There's no need of freeing memory. */
+    /* free_pool();                /1* NO-OP if init_pool() returns false. *1/ */
+    /* free(content); */
+    /* free(lines); */
 
     if (in_file != stdin) {
         fclose(in_file);
