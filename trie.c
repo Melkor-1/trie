@@ -22,13 +22,13 @@
 #define OUTPUT_DOT_FILE "graph.dot"
 #define AC_BUFFER_CAP   1024 * 2
 
-struct flags {
+typedef struct {
     bool kflag;                 /* Keep the transient .DOT file. */
     bool hflag;                 /* Help message. */
     bool sflag;                 /* Generate a .SVG file. */
     bool cflag;                 /* Suggest autocompletions. */
     bool pflag;                 /* Prefix for the .DOT file. */
-};
+} flags;
 
 #ifdef DEBUG
 #include "size.h"
@@ -63,7 +63,7 @@ static void usage_err(const char *prog_name)
 }
 
 static void parse_options(const struct option * long_options,
-                          struct flags *        opt_ptr, 
+                          flags *               opt_ptr, 
                           int                   argc, 
                           char **restrict       argv,
                           const char **restrict prefix)
@@ -151,7 +151,7 @@ static void parse_options(const struct option * long_options,
 
 /* Instead of using the whole ASCII charset, we'd only use the set of printable
  * characters. This cuts down the struct size from 2056 bytes to 768 bytes if 
- * using 64-bit pointers, or from 1028 bytes to 384 bytes if using 32-bit integers.
+ * using 64-bit integers, or from 1028 bytes to 384 bytes if using 32-bit integers.
  * (or so pahole outputs, there might be a slight difference in the size across 
  * different platforms).
  */
@@ -207,6 +207,7 @@ static inline void free_pool(void)
     Trie.capacity = 0;
     Trie.count = 0;
     free(Trie.pool);
+    Trie.pool = NULL;
 }
 
 static int32_t alloc_node(void)
@@ -217,7 +218,7 @@ static int32_t alloc_node(void)
         /* We can no longer add more nodes. Bail out. */
         if (remaining == 0) {
             /* Is this helpful? */
-            fputs("Error: too many nodes. Consider recompiling the program"
+            fputs("Error: too many nodes. Consider recompiling the program "
                 "with a greater int width for more indexing range.\n", stderr);
             exit(EXIT_FAILURE);
         }
@@ -233,7 +234,7 @@ static int32_t alloc_node(void)
         Trie.pool = tmp;
     }
 
-    Node *const tmp = &Trie.pool[Trie.count];
+    Node *const tmp = Trie.pool + Trie.count; 
 
     memset(tmp->children, INVALID_OFFSET, sizeof tmp->children);
     Trie.pool[Trie.count].terminal = false;
@@ -242,7 +243,7 @@ static int32_t alloc_node(void)
 
 static bool insert_text(int32_t root_idx, const char *text)
 {
-    while (*text != '\0') {
+    for (; *text != '\0'; ++text) {
         const int32_t idx = *text - ASCII_OFFSET;
 
         if (Trie.pool[root_idx].children[idx] == INVALID_OFFSET) {
@@ -255,10 +256,10 @@ static bool insert_text(int32_t root_idx, const char *text)
             Trie.pool[root_idx].children[idx] = tmp;
         }
         root_idx = Trie.pool[root_idx].children[idx];
-        ++text;
     }
 
-    return Trie.pool[root_idx].terminal = true;
+    Trie.pool[root_idx].terminal = true;
+    return true;
 }
 
 static char ac_buffer[AC_BUFFER_CAP];
@@ -275,13 +276,13 @@ static void ac_buffer_push(char ch)
 static void ac_buffer_pop(void)
 {
     if (ac_buffer_sz > 0) {
-        ac_buffer_sz--;
+        --ac_buffer_sz;
     }
 }
 
 static int32_t find_prefix(int32_t root_idx, const char *prefix)
 {
-    while (*prefix != '\0') {
+    for (; *prefix != '\0'; ++prefix) {
         const int32_t child_idx = *prefix - ASCII_OFFSET;
 
         if (Trie.pool[root_idx].children[child_idx] == INVALID_OFFSET) {
@@ -290,7 +291,6 @@ static int32_t find_prefix(int32_t root_idx, const char *prefix)
 
         root_idx = Trie.pool[root_idx].children[child_idx];
         ac_buffer_push(*prefix);
-        ++prefix;
     }
     return root_idx;
 }
@@ -399,7 +399,7 @@ static bool generate_dot(int32_t root_idx, const char *prefix)
 }
 
 static bool process_args(int32_t                root_idx,
-                         const struct flags *   options, 
+                         const flags *          options, 
                          const char *restrict   prefix,
                          const char *restrict   out_file)
 {
@@ -468,7 +468,7 @@ int main(int argc, char *argv[])
     };
 
     FILE *in_file = stdin;
-    struct flags options = { false, false, false, false, false };
+    flags options = { false, false, false, false, false };
     const char *search_prefix = NULL;
 
     parse_options(long_options, &options, argc, argv, &search_prefix);
